@@ -132,10 +132,13 @@ def main():
         if not password:
             print(f"\nTo connect to Google Keep for {args.email}, enter your Google App Password.")
             print("(Generate one at: https://myaccount.google.com/apppasswords)")
-            password = getpass.getpass("Enter 16-character App Password: ").strip()
+            password = getpass.getpass("Enter 16-character App Password: ")
             if not password:
                 print("No password provided. Exiting.")
                 return
+
+        # Strip all spaces and newlines (Google displays them in blocks of 4: 'xxxx xxxx xxxx xxxx')
+        password = re.sub(r'\s+', '', password).strip()
 
         print(f"Logging in to Google Keep as {args.email}...")
         try:
@@ -150,7 +153,14 @@ def main():
             except Exception:
                 pass
         except Exception as e:
-            print(f"Login failed: {e}")
+            print(f"\nLogin failed: {e}")
+            print("\nCommon reasons for 'BadAuthentication':")
+            print("1. Regular password used: You MUST use a 16-letter App Password, not your standard Google password.")
+            print("   (Generate one at: https://myaccount.google.com/apppasswords)")
+            print("2. 2-Step Verification: Make sure 2FA is active on your Google account before generating an App Password.")
+            print("3. Typo in App Password: Try generating a fresh one and pasting it.")
+            print("4. Alternative: You can also use Google Takeout (zero passwords needed):")
+            print("   Go to https://takeout.google.com -> select only 'Keep' -> download the zip -> run 'python import_from_takeout.py Takeout.zip'")
             return
 
     print("Successfully connected and synced with Google Keep!")
