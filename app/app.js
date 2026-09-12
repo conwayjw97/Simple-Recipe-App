@@ -9,6 +9,7 @@ const STATE = {
   activeTag: null,
   searchQuery: '',
   currentRecipe: null,
+  currentServings: null,
   fontSizeMultiplier: 1.0,
   wakeLock: null,
   gdrive: {
@@ -55,12 +56,23 @@ const DOM = {
   shareRecipeBtn: document.getElementById('shareRecipeBtn'),
   recipeArticle: document.getElementById('recipeArticle'),
 
+  // Servings Scaling Controls
+  servingsBar: document.getElementById('servingsBar'),
+  detailServingsCount: document.getElementById('detailServingsCount'),
+  servingsScaledNotice: document.getElementById('servingsScaledNotice'),
+  servingsDownBtn: document.getElementById('servingsDownBtn'),
+  servingsUpBtn: document.getElementById('servingsUpBtn'),
+  servingsCurrentVal: document.getElementById('servingsCurrentVal'),
+  servingsPresets: document.getElementById('servingsPresets'),
+  servingsResetBtn: document.getElementById('servingsResetBtn'),
+
   // Recipe Modal
   recipeModal: document.getElementById('recipeModal'),
   modalTitle: document.getElementById('modalTitle'),
   recipeForm: document.getElementById('recipeForm'),
   formTitle: document.getElementById('formTitle'),
   formTags: document.getElementById('formTags'),
+  formServings: document.getElementById('formServings'),
   formUrl: document.getElementById('formUrl'),
   formIngredients: document.getElementById('formIngredients'),
   formInstructions: document.getElementById('formInstructions'),
@@ -97,6 +109,7 @@ function parseRecipeText(text, filename = '', folderName = '') {
     tags.add(capitalize(folderName));
   }
   let url = '';
+  let servings = null;
   const ingredients = [];
   const instructions = [];
 
@@ -121,6 +134,11 @@ function parseRecipeText(text, filename = '', folderName = '') {
         const t = p.trim();
         if (t) tags.add(capitalize(t));
       }
+      continue;
+    }
+    if (lower.startsWith('servings:') || lower.startsWith('serves:') || lower.startsWith('yield:')) {
+      const m = trimmed.match(/\d+/);
+      if (m) servings = parseInt(m[0], 10);
       continue;
     }
     if (lower.startsWith('source:') || lower.startsWith('url:')) {
@@ -150,10 +168,17 @@ function parseRecipeText(text, filename = '', folderName = '') {
     }
   }
 
+  if (!servings) {
+    const titleMatch = title.match(/\bfor\s+(\d+)\b/i);
+    const textMatch = text.match(/\bserves?\s*(\d+)\b/i);
+    servings = titleMatch ? parseInt(titleMatch[1], 10) : (textMatch ? parseInt(textMatch[1], 10) : 4);
+  }
+
   return {
     id: 'rec_' + Math.random().toString(36).substr(2, 9),
     title: title || 'Untitled Recipe',
     tags: Array.from(tags).sort(),
+    servings: servings || 4,
     url: url || '',
     ingredients,
     instructions
@@ -169,6 +194,7 @@ function serializeRecipeToText(recipe) {
   if (recipe.tags && recipe.tags.length > 0) {
     lines.push(`Tags: ${recipe.tags.join(', ')}`);
   }
+  lines.push(`Servings: ${recipe.servings || 4}`);
   if (recipe.url) {
     lines.push(`Source: ${recipe.url}`);
   }
@@ -190,6 +216,132 @@ function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+// ================= Ingredient Scaling Engine =================
+
+const UNICODE_FRACTIONS = {
+  '½': 0.5, '⅓': 1/3, '⅔': 2/3, '¼': 0.25, '¾': 0.75,
+  '⅕': 0.2, '⅖': 0.4, '⅗': 0.6, '⅘': 0.8,
+  '⅙': 1/6, '⅚': 5/6, '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875
+};
+
+function formatQuantity(num) {
+  if (num === 0) return '0';
+  
+  const rounded = Math.round(num);
+  if (Math.abs(num - rounded) < 0.035) {
+    return String(rounded);
+  }
+
+  const intPart = Math.floor(num);
+  const fracPart = num - intPart;
+
+  const fractions = [
+    { val: 0.125, str: '⅛' },
+    { val: 0.25,  str: '¼' },
+    { val: 0.333, str: '⅓' },
+    { val: 0.375, str: '⅜' },
+    { val: 0.5,   str: '½' },
+    { val: 0.625, str: '⅝' },
+    { val: 0.667, str: '⅔' },
+    { val: 0.75,  str: '¾' },
+    { val: 0.875, str: '⅞' }
+  ];
+
+  for (const f of fractions) {
+    if (Math.abs(fracPart - f.val) < 0.045) {
+      return intPart > 0 ? `${intPart} ${f.str}` : f.str;
+    }
+  }
+
+  if (num >= 10) {
+    return String(Math.round(num));
+  }
+
+  return parseFloat(num.toFixed(2)).toString();
+}
+
+function parseNumber(str) {
+  str = str.trim();
+  if (UNICODE_FRACTIONS[str]) return UNICODE_FRACTIONS[str];
+
+  const mixedUni = str.match(/^(\d+)\s*([½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞])$/);
+  if (mixedUni) {
+    return parseInt(mixedUni[1], 10) + UNICODE_FRACTIONS[mixedUni[2]];
+  }
+
+  const mixedSlash = str.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+  if (mixedSlash) {
+    return parseInt(mixedSlash[1], 10) + (parseInt(mixedSlash[2], 10) / parseInt(mixedSlash[3], 10));
+  }
+
+  const slash = str.match(/^(\d+)\/(\d+)$/);
+  if (slash) {
+    return parseInt(slash[1], 10) / parseInt(slash[2], 10);
+  }
+
+  const val = parseFloat(str);
+  return isNaN(val) ? null : val;
+}
+
+function scaleIngredient(line, factor) {
+  if (factor === 1 || !line || typeof line !== 'string') return line;
+
+  const prefixMatch = line.match(/^(\s*(?:about|approx\.?|ca\.?)\s+)/i);
+  const prefix = prefixMatch ? prefixMatch[1] : '';
+  const rest = prefixMatch ? line.slice(prefix.length) : line;
+
+  // 1. Range at start: e.g. "2-3", "1 to 2", "½ - 1"
+  const rangeRegex = /^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]))\s*(?:-|to)\s*((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?|[½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]))(\s*[a-zA-Z%]+.*)?$/;
+  const rangeMatch = rest.match(rangeRegex);
+  if (rangeMatch) {
+    const num1 = parseNumber(rangeMatch[1]);
+    const num2 = parseNumber(rangeMatch[2]);
+    if (num1 !== null && num2 !== null) {
+      const scaled1 = formatQuantity(num1 * factor);
+      const scaled2 = formatQuantity(num2 * factor);
+      const sep = rest.includes('to') ? ' to ' : '-';
+      const remainder = rangeMatch[3] || '';
+      return prefix + scaled1 + sep + scaled2 + remainder;
+    }
+  }
+
+  // 2. Single quantity at start: "2 tbsp", "350g", "1 1/2 tsp", "½ tsp"
+  const singleRegex = /^((?:\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?\s*[½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]|\d+(?:\.\d+)?|[½⅓⅔¼¾⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]))(\s*)([a-zA-Z%]+.*)?$/;
+  const singleMatch = rest.match(singleRegex);
+  if (singleMatch) {
+    const rawNum = singleMatch[1];
+    const spacing = singleMatch[2];
+    const remainder = singleMatch[3] || '';
+
+    const attachedUnitMatch = rawNum.match(/^(\d+(?:\.\d+)?)([a-zA-Z]+)$/);
+    if (attachedUnitMatch) {
+      const n = parseFloat(attachedUnitMatch[1]);
+      const unit = attachedUnitMatch[2];
+      const scaled = formatQuantity(n * factor);
+      return prefix + scaled + unit + spacing + remainder;
+    }
+
+    const num = parseNumber(rawNum);
+    if (num !== null) {
+      const scaled = formatQuantity(num * factor);
+      return prefix + scaled + spacing + remainder;
+    }
+  }
+
+  // 3. Italian / suffix style: e.g. "Pomodori pelati 400 g" or "Peperoni rossi 1"
+  const suffixMatch = rest.match(/^(.*?\s+)(\d+(?:\.\d+)?)\s*(g|kg|ml|l|oz|tbsp|tsp)?$/i);
+  if (suffixMatch) {
+    const leadText = suffixMatch[1];
+    const num = parseFloat(suffixMatch[2]);
+    const unit = suffixMatch[3] ? ' ' + suffixMatch[3] : '';
+    if (!isNaN(num)) {
+      return prefix + leadText + formatQuantity(num * factor) + unit;
+    }
+  }
+
+  return line;
+}
+
 // ================= Persistence =================
 
 function loadRecipes() {
@@ -199,6 +351,24 @@ function loadRecipes() {
       STATE.recipes = JSON.parse(raw);
     } else if (window.INITIAL_RECIPES && Array.from(window.INITIAL_RECIPES).length > 0) {
       STATE.recipes = window.INITIAL_RECIPES;
+      saveRecipes();
+    }
+
+    // Ensure all loaded recipes have a valid servings count
+    let needsSave = false;
+    for (const r of STATE.recipes) {
+      if (!r.servings) {
+        const match = (window.INITIAL_RECIPES || []).find(ir => ir.title.toLowerCase() === r.title.toLowerCase());
+        if (match && match.servings) {
+          r.servings = match.servings;
+        } else {
+          const m = (r.title || '').match(/\bfor\s+(\d+)\b/i);
+          r.servings = m ? parseInt(m[1], 10) : 4;
+        }
+        needsSave = true;
+      }
+    }
+    if (needsSave) {
       saveRecipes();
     }
   } catch (e) {
@@ -379,6 +549,7 @@ function renderRecipeList() {
         <div class="recipe-card-tags">${tagsHtml}</div>
       </div>
       <div class="recipe-card-meta">
+        <span>👥 ${recipe.servings || 4} servings</span>
         <span>🥕 ${recipe.ingredients ? recipe.ingredients.length : 0} items</span>
         <span>📝 ${recipe.instructions ? recipe.instructions.length : 0} steps</span>
       </div>
@@ -399,8 +570,84 @@ function renderAll() {
 
 // ================= Detail View (Cook Mode) =================
 
+function renderDetailIngredients(preserveChecked = false) {
+  if (!STATE.currentRecipe) return;
+  const recipe = STATE.currentRecipe;
+  const baseServings = recipe.servings || 4;
+  const factor = STATE.currentServings / baseServings;
+
+  // Preserve checked state
+  const checkedIndices = new Set();
+  if (preserveChecked) {
+    const existingItems = DOM.detailIngredients.querySelectorAll('.checklist-item');
+    existingItems.forEach((el, idx) => {
+      if (el.classList.contains('checked')) {
+        checkedIndices.add(idx);
+      }
+    });
+  }
+
+  // Update Servings Bar UI
+  if (DOM.detailServingsCount) {
+    DOM.detailServingsCount.textContent = `${baseServings} servings`;
+  }
+  if (DOM.servingsCurrentVal) {
+    DOM.servingsCurrentVal.textContent = STATE.currentServings;
+  }
+
+  const isScaled = STATE.currentServings !== baseServings;
+  if (DOM.servingsScaledNotice) {
+    if (isScaled) {
+      const mult = factor % 1 === 0 ? factor.toString() : factor.toFixed(2);
+      DOM.servingsScaledNotice.textContent = `(scaled from ${baseServings}, ${mult}x)`;
+      DOM.servingsScaledNotice.classList.remove('hidden');
+    } else {
+      DOM.servingsScaledNotice.classList.add('hidden');
+    }
+  }
+
+  if (DOM.servingsResetBtn) {
+    DOM.servingsResetBtn.classList.toggle('hidden', !isScaled);
+  }
+
+  // Update active state on preset chips
+  if (DOM.servingsPresets) {
+    const chips = DOM.servingsPresets.querySelectorAll('.preset-chip');
+    chips.forEach(chip => {
+      const scale = parseFloat(chip.dataset.scale);
+      const expected = Math.max(1, Math.round(baseServings * scale));
+      chip.classList.toggle('active', STATE.currentServings === expected);
+    });
+  }
+
+  // Render scaled ingredients
+  DOM.detailIngredients.innerHTML = '';
+  DOM.ingredientCount.textContent = `(${recipe.ingredients ? recipe.ingredients.length : 0})`;
+  if (recipe.ingredients) {
+    recipe.ingredients.forEach((ing, idx) => {
+      const scaledText = scaleIngredient(ing, factor);
+      const li = document.createElement('li');
+      li.className = 'checklist-item' + (checkedIndices.has(idx) ? ' checked' : '');
+      li.innerHTML = `
+        <span class="checkbox-circle">✓</span>
+        <span>${escapeHtml(scaledText)}</span>
+      `;
+      li.onclick = () => li.classList.toggle('checked');
+      DOM.detailIngredients.appendChild(li);
+    });
+  }
+}
+
+function setDetailServings(newServings) {
+  newServings = Math.max(1, Math.min(100, Math.round(newServings)));
+  if (newServings === STATE.currentServings) return;
+  STATE.currentServings = newServings;
+  renderDetailIngredients(true);
+}
+
 async function openRecipe(recipe) {
   STATE.currentRecipe = recipe;
+  STATE.currentServings = recipe.servings || 4;
 
   DOM.detailTitle.textContent = recipe.title;
 
@@ -418,21 +665,8 @@ async function openRecipe(recipe) {
     DOM.detailSourceWrapper.classList.add('hidden');
   }
 
-  // Ingredients checklist
-  DOM.detailIngredients.innerHTML = '';
-  DOM.ingredientCount.textContent = `(${recipe.ingredients ? recipe.ingredients.length : 0})`;
-  if (recipe.ingredients) {
-    recipe.ingredients.forEach(ing => {
-      const li = document.createElement('li');
-      li.className = 'checklist-item';
-      li.innerHTML = `
-        <span class="checkbox-circle">✓</span>
-        <span>${escapeHtml(ing)}</span>
-      `;
-      li.onclick = () => li.classList.toggle('checked');
-      DOM.detailIngredients.appendChild(li);
-    });
-  }
+  // Ingredients checklist & Servings Controls
+  renderDetailIngredients(false);
 
   // Instructions step cards
   DOM.detailInstructions.innerHTML = '';
@@ -484,11 +718,13 @@ function openAddModal(recipeToEdit = null) {
   if (recipeToEdit) {
     DOM.formTitle.value = recipeToEdit.title;
     DOM.formTags.value = (recipeToEdit.tags || []).join(', ');
+    if (DOM.formServings) DOM.formServings.value = recipeToEdit.servings || 4;
     DOM.formUrl.value = recipeToEdit.url || '';
     DOM.formIngredients.value = (recipeToEdit.ingredients || []).join('\n');
     DOM.formInstructions.value = (recipeToEdit.instructions || []).join('\n');
   } else {
     DOM.recipeForm.reset();
+    if (DOM.formServings) DOM.formServings.value = 4;
   }
 
   DOM.recipeModal.classList.remove('hidden');
@@ -508,6 +744,7 @@ DOM.recipeForm.onsubmit = async (e) => {
     .split(',')
     .map(t => capitalize(t.trim()))
     .filter(t => t.length > 0);
+  const servings = DOM.formServings ? (parseInt(DOM.formServings.value, 10) || 4) : 4;
   const url = DOM.formUrl.value.trim();
   const ingredients = DOM.formIngredients.value
     .split('\n')
@@ -526,6 +763,7 @@ DOM.recipeForm.onsubmit = async (e) => {
         ...STATE.recipes[idx],
         title,
         tags,
+        servings,
         url,
         ingredients,
         instructions
@@ -537,6 +775,7 @@ DOM.recipeForm.onsubmit = async (e) => {
       id: 'rec_' + Date.now(),
       title,
       tags,
+      servings,
       url,
       ingredients,
       instructions
@@ -871,7 +1110,7 @@ DOM.exportAllBtn.onclick = () => {
 };
 
 DOM.resetLibraryBtn.onclick = () => {
-  if (confirm('Reset to the initial 233 recipes library? Any local edits will be refreshed.')) {
+  if (confirm('Reset to the initial 246 recipes library? Any local edits will be refreshed.')) {
     STATE.recipes = window.INITIAL_RECIPES || [];
     saveRecipes();
     renderAll();
@@ -900,6 +1139,36 @@ DOM.clearFilterBtn.onclick = () => selectTag(null);
 DOM.backBtn.onclick = closeRecipeDetail;
 DOM.fontDownBtn.onclick = () => adjustFontSize(-0.1);
 DOM.fontUpBtn.onclick = () => adjustFontSize(+0.1);
+
+// Servings controls in Detail View
+if (DOM.servingsDownBtn) {
+  DOM.servingsDownBtn.onclick = () => {
+    if (STATE.currentServings) setDetailServings(STATE.currentServings - 1);
+  };
+}
+
+if (DOM.servingsUpBtn) {
+  DOM.servingsUpBtn.onclick = () => {
+    if (STATE.currentServings) setDetailServings(STATE.currentServings + 1);
+  };
+}
+
+if (DOM.servingsResetBtn) {
+  DOM.servingsResetBtn.onclick = () => {
+    if (STATE.currentRecipe) setDetailServings(STATE.currentRecipe.servings || 4);
+  };
+}
+
+if (DOM.servingsPresets) {
+  DOM.servingsPresets.onclick = (e) => {
+    const chip = e.target.closest('.preset-chip');
+    if (!chip || !STATE.currentRecipe) return;
+    const scale = parseFloat(chip.dataset.scale);
+    const base = STATE.currentRecipe.servings || 4;
+    const target = Math.max(1, Math.round(base * scale));
+    setDetailServings(target);
+  };
+}
 
 DOM.editRecipeBtn.onclick = () => {
   if (STATE.currentRecipe) openAddModal(STATE.currentRecipe);

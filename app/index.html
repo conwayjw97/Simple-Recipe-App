@@ -106,6 +106,33 @@
               <h2>Ingredients</h2>
               <span id="ingredientCount" class="subtle-count"></span>
             </div>
+
+            <!-- Servings & Scaling Bar -->
+            <div class="servings-bar" id="servingsBar">
+              <div class="servings-header-row">
+                <div class="servings-badge-wrapper">
+                  <span class="servings-icon">👥</span>
+                  <span class="servings-title">Servings:</span>
+                  <span id="detailServingsCount" class="servings-badge">4</span>
+                </div>
+                <span id="servingsScaledNotice" class="servings-scaled-notice hidden"></span>
+              </div>
+              <div class="servings-controls-row">
+                <div class="servings-stepper" title="Adjust servings up or down">
+                  <button type="button" id="servingsDownBtn" class="btn btn-sm btn-stepper" aria-label="Decrease servings">−</button>
+                  <span id="servingsCurrentVal" class="servings-current-val">4</span>
+                  <button type="button" id="servingsUpBtn" class="btn btn-sm btn-stepper" aria-label="Increase servings">+</button>
+                </div>
+                <div class="servings-presets" id="servingsPresets">
+                  <button type="button" class="preset-chip" data-scale="0.5" title="Scale to 50%">½x</button>
+                  <button type="button" class="preset-chip active" data-scale="1" title="Original size">1x</button>
+                  <button type="button" class="preset-chip" data-scale="2" title="Double ingredients">2x</button>
+                  <button type="button" class="preset-chip" data-scale="3" title="Triple ingredients">3x</button>
+                </div>
+                <button type="button" id="servingsResetBtn" class="btn btn-sm servings-reset-btn hidden" title="Reset to original servings">↺ Reset</button>
+              </div>
+            </div>
+
             <p class="section-hint">Tap any ingredient to cross it off as you cook</p>
             <ul id="detailIngredients" class="checklist"></ul>
           </div>
@@ -142,9 +169,15 @@
             <small class="form-help">Tip: Tags become searchable filters in the app and folders in Drive</small>
           </div>
 
-          <div class="form-group">
-            <label for="formUrl">Source URL (optional)</label>
-            <input type="url" id="formUrl" placeholder="https://...">
+          <div class="form-row">
+            <div class="form-group form-col">
+              <label for="formServings">Servings *</label>
+              <input type="number" id="formServings" min="1" max="100" value="4" required>
+            </div>
+            <div class="form-group form-col">
+              <label for="formUrl">Source URL (optional)</label>
+              <input type="url" id="formUrl" placeholder="https://...">
+            </div>
           </div>
 
           <div class="form-group">
@@ -169,7 +202,7 @@
     <div id="settingsModal" class="modal-overlay hidden">
       <div class="modal-dialog">
         <div class="modal-header">
-          <h3>Google Drive & Offline Settings <span style="font-size:0.75rem; color:#38bdf8; font-weight:normal;">(v3.1)</span></h3>
+          <h3>Google Drive & Offline Settings <span style="font-size:0.75rem; color:#38bdf8; font-weight:normal;">(v3.2)</span></h3>
           <button id="closeSettingsBtn" class="btn-close">✕</button>
         </div>
         <div class="modal-body settings-content">
@@ -214,7 +247,7 @@
                 <input type="file" id="localFileInput" multiple accept=".txt,.md,.json" style="display:none;">
               </label>
               <button id="exportAllBtn" class="btn btn-outline">💾 Export All Recipes (JSON)</button>
-              <button id="resetLibraryBtn" class="btn btn-danger-outline">🔄 Reload Built-in Recipes (233)</button>
+              <button id="resetLibraryBtn" class="btn btn-danger-outline">🔄 Reload Built-in Recipes (246)</button>
             </div>
           </section>
         </div>

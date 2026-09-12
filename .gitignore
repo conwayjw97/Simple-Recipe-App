@@ -4,6 +4,7 @@ recipes_database.json
 bookmarks.html
 *.txt
 app/recipes_data.js
+scraped_yields_cache.json
 
 # Python
 __pycache__/

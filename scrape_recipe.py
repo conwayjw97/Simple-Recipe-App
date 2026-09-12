@@ -41,11 +41,23 @@ def extract_recipe_from_url(url):
     tags = set()
 
     # Strategy 1: recipe-scrapers library
+    servings = None
     try:
         scraper = scrape_html(html, org_url=clean_url)
         title = scraper.title()
         ingredients = [clean_text(i) for i in scraper.ingredients() if clean_text(i)]
         instructions = [clean_text(i) for i in scraper.instructions_list() if clean_text(i)]
+        
+        # Extract servings
+        y = getattr(scraper, 'yields', lambda: None)()
+        if y:
+            m = re.search(r'(?i)(?:serves?|servings?|makes?|yield|for)\s*[:=-]?\s*(\d+)', str(y))
+            if m:
+                servings = int(m.group(1))
+            else:
+                m2 = re.search(r'\b(\d+)\b', str(y))
+                if m2:
+                    servings = int(m2.group(1))
         
         # Extract potential tags / cuisine / category
         for attr in ['category', 'cuisine']:
@@ -99,6 +111,16 @@ def extract_recipe_from_url(url):
                         if raw_ing and inst_list:
                             ingredients = [clean_text(i) for i in raw_ing if clean_text(i)]
                             instructions = inst_list
+
+                        if not servings and item.get('recipeYield'):
+                            ry = str(item.get('recipeYield'))
+                            m = re.search(r'(?i)(?:serves?|servings?|makes?|yield|for)\s*[:=-]?\s*(\d+)', ry)
+                            if m:
+                                servings = int(m.group(1))
+                            else:
+                                m2 = re.search(r'\b(\d+)\b', ry)
+                                if m2:
+                                    servings = int(m2.group(1))
                             
                         # Categories / keywords
                         for cat_field in ['recipeCategory', 'recipeCuisine', 'keywords']:
@@ -119,19 +141,28 @@ def extract_recipe_from_url(url):
         title = title_tag.get_text().strip() if title_tag else "New Recipe"
         title = re.sub(r'\s*[-|]\s*(BBC Good Food|Allrecipes|Food Network|Simply Recipes).*$', '', title, flags=re.IGNORECASE)
 
+    if not servings:
+        m = re.search(r'(?i)\bfor\s+(\d+)\b', title)
+        if m:
+            servings = int(m.group(1))
+        else:
+            servings = 4
+
     return {
         'title': title or "Untitled Recipe",
         'url': clean_url,
         'tags': sorted(list(tags)),
+        'servings': servings,
         'ingredients': ingredients,
         'instructions': instructions
     }
 
-def format_recipe_content(title, tags, url, ingredients, instructions):
+def format_recipe_content(title, tags, servings, url, ingredients, instructions):
     lines = []
     lines.append(f"Title: {title}")
     if tags:
         lines.append(f"Tags: {', '.join(tags)}")
+    lines.append(f"Servings: {servings or 4}")
     if url:
         lines.append(f"Source: {url}")
     lines.append("")
@@ -152,6 +183,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert any Recipe URL to standard Google Drive recipe text file")
     parser.add_argument("url", nargs="?", help="URL of the recipe to extract")
     parser.add_argument("--tags", "-t", help="Comma-separated list of tags (e.g. 'Pasta, Italian, Dinner')")
+    parser.add_argument("--servings", "-s", type=int, default=None, help="Number of servings (e.g. 4)")
     parser.add_argument("--outdir", "-o", default=None, help="Output directory (defaults to recipes_exported/<Category> or recipes_exported)")
     args = parser.parse_args()
 
@@ -187,10 +219,12 @@ def main():
                     final_tags.add(cleaned.capitalize())
 
     sorted_tags = sorted(list(final_tags))
+    servings = args.servings if args.servings else recipe.get('servings', 4)
 
     formatted_text = format_recipe_content(
         title=recipe['title'],
         tags=sorted_tags,
+        servings=servings,
         url=recipe['url'],
         ingredients=recipe['ingredients'],
         instructions=recipe['instructions']
@@ -224,6 +258,7 @@ def main():
     print("\n--- Recipe Successfully Converted! ---")
     print(f"Title: {recipe['title']}")
     print(f"Tags: {', '.join(sorted_tags) if sorted_tags else 'None'}")
+    print(f"Servings: {servings}")
     print(f"Ingredients: {len(recipe['ingredients'])} items")
     print(f"Instructions: {len(recipe['instructions'])} steps")
     print(f"Saved to: {file_path}")

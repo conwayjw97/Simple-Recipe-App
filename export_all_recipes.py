@@ -75,10 +75,27 @@ def parse_single_recipe(url, bookmark_title, category):
         ingredients = [clean_text(i) for i in ingredients if clean_text(i)]
         instructions = [clean_text(i) for i in instructions if clean_text(i)]
         
+        servings = None
+        y = getattr(scraper, 'yields', lambda: None)()
+        if y:
+            m = re.search(r'(?i)(?:serves?|servings?|makes?|yield|for)\s*[:=-]?\s*(\d+)', str(y))
+            if m:
+                servings = int(m.group(1))
+            else:
+                m2 = re.search(r'\b(\d+)\b', str(y))
+                if m2:
+                    servings = int(m2.group(1))
+
+        if not servings:
+            m_title = re.search(r'(?i)\bfor\s+(\d+)\b', title)
+            if m_title:
+                servings = int(m_title.group(1))
+
         if ingredients and instructions:
             return {
                 'title': title,
                 'category': category,
+                'servings': servings or 4,
                 'ingredients': ingredients,
                 'instructions': instructions,
                 'url': original_url,
@@ -125,10 +142,27 @@ def parse_single_recipe(url, bookmark_title, category):
                         clean_ing = [clean_text(i) for i in raw_ing if clean_text(i)]
                         clean_ins = [clean_text(i) for i in inst_list if clean_text(i)]
                         
+                        servings = None
+                        if item.get('recipeYield'):
+                            ry = str(item.get('recipeYield'))
+                            m = re.search(r'(?i)(?:serves?|servings?|makes?|yield|for)\s*[:=-]?\s*(\d+)', ry)
+                            if m:
+                                servings = int(m.group(1))
+                            else:
+                                m2 = re.search(r'\b(\d+)\b', ry)
+                                if m2:
+                                    servings = int(m2.group(1))
+
+                        if not servings:
+                            m_title = re.search(r'(?i)\bfor\s+(\d+)\b', title)
+                            if m_title:
+                                servings = int(m_title.group(1))
+
                         if clean_ing and clean_ins:
                             return {
                                 'title': title,
                                 'category': category,
+                                'servings': servings or 4,
                                 'ingredients': clean_ing,
                                 'instructions': clean_ins,
                                 'url': original_url,
@@ -140,20 +174,29 @@ def parse_single_recipe(url, bookmark_title, category):
     return {
         'title': bookmark_title,
         'category': category,
+        'servings': 4,
         'ingredients': [],
         'instructions': [f"Could not automatically extract recipe. URL: {original_url}"],
         'url': original_url,
         'status': 'unparsed'
     }
 
-def format_recipe_body(ingredients, instructions):
+def format_recipe_body(title, category, servings, url, ingredients, instructions):
     lines = []
+    lines.append(f"Title: {title}")
+    if category:
+        lines.append(f"Tags: {category}")
+    lines.append(f"Servings: {servings or 4}")
+    if url:
+        lines.append(f"Source: {url}")
+    lines.append("")
+    
+    lines.append("[Ingredients]")
     for ing in ingredients:
         lines.append(ing)
     
-    if ingredients:
-        lines.append("")
-    
+    lines.append("")
+    lines.append("[Instructions]")
     for step in instructions:
         step_text = re.sub(r'^[-\u2022\*\d\.]+\s*', '', step).strip()
         lines.append(f"- {step_text}")
@@ -235,7 +278,14 @@ def main():
                     'status': 'error'
                 }
 
-            formatted_body = format_recipe_body(res['ingredients'], res['instructions'])
+            formatted_body = format_recipe_body(
+                title=res.get('title', item['title']),
+                category=res.get('category', item['category']),
+                servings=res.get('servings', 4),
+                url=res.get('url', item['url']),
+                ingredients=res.get('ingredients', []),
+                instructions=res.get('instructions', [])
+            )
             res['note_body'] = formatted_body
             results.append(res)
 
