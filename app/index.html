@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>RecipeBox - High Performance Recipe Viewer</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#1e293b">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Super-lightweight offline recipe viewer and manager synced with Google Drive.">
+  <link rel="stylesheet" href="style.css">
+  <!-- Google Identity Services for Drive Sync -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo">
+          <span class="logo-icon">🍳</span>
+          <span class="logo-text">RecipeBox</span>
+        </div>
+        <span id="recipeCountBadge" class="badge">0</span>
+      </div>
+      <div class="header-actions">
+        <button id="addRecipeBtn" class="btn btn-primary" title="Add Recipe">
+          <span>+</span> <span class="btn-text">Add</span>
+        </button>
+        <button id="syncDriveBtn" class="btn btn-outline" title="Sync with Google Drive">
+          <span>☁️</span> <span class="btn-text">Sync</span>
+        </button>
+        <button id="settingsBtn" class="btn btn-icon" title="Settings">⚙️</button>
+      </div>
+    </header>
+
+    <!-- Search & Filter Controls -->
+    <section class="search-section">
+      <div class="search-bar-wrapper">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="searchInput" placeholder="Search recipes, tags (e.g. Pasta, Seafood), ingredients..." autocomplete="off">
+        <button id="clearSearchBtn" class="btn-clear hidden" title="Clear search">✕</button>
+      </div>
+
+      <!-- Tag Filter Bar (Horizontal scrollable chips) -->
+      <nav class="tag-bar" id="tagBar" aria-label="Filter by tag">
+        <!-- Injected via JS: All, Beef, Pasta, Seafood, etc. -->
+      </nav>
+    </section>
+
+    <!-- Main Content: Recipe List View -->
+    <main id="listView" class="view-container">
+      <div id="activeFilterNotice" class="filter-notice hidden">
+        <span>Filtering by: <strong id="filterTagLabel"></strong></span>
+        <button id="clearFilterBtn" class="btn-link">Show all</button>
+      </div>
+
+      <div id="recipeList" class="recipe-grid">
+        <!-- Rendered recipe cards -->
+      </div>
+
+      <div id="emptyState" class="empty-state hidden">
+        <p class="empty-icon">🍽️</p>
+        <p class="empty-title">No matching recipes found</p>
+        <p class="empty-subtitle">Try searching for a different keyword or selecting another tag.</p>
+      </div>
+    </main>
+
+    <!-- Detail View: Cook Mode with Screen Keep-Awake -->
+    <section id="detailView" class="detail-view hidden">
+      <div class="detail-header">
+        <button id="backBtn" class="btn btn-icon" title="Back to recipes">
+          ← <span class="btn-text">Back</span>
+        </button>
+        
+        <div class="cook-mode-badge" id="cookModeBadge" title="Cook Mode: Screen stays awake while recipe is open">
+          <span class="wake-icon">🔆</span>
+          <span class="wake-text">Cook Mode: Screen ON</span>
+        </div>
+
+        <div class="detail-controls">
+          <div class="font-size-controls" title="Adjust text size for kitchen reading">
+            <button id="fontDownBtn" class="btn btn-sm">A-</button>
+            <button id="fontUpBtn" class="btn btn-sm">A+</button>
+          </div>
+          <button id="editRecipeBtn" class="btn btn-icon" title="Edit Recipe">✏️</button>
+          <button id="shareRecipeBtn" class="btn btn-icon" title="Copy / Share">📋</button>
+        </div>
+      </div>
+
+      <article class="recipe-article" id="recipeArticle">
+        <h1 id="detailTitle" class="recipe-title"></h1>
+        
+        <div id="detailTags" class="detail-tags"></div>
+
+        <div id="detailSourceWrapper" class="source-wrapper hidden">
+          <span class="source-label">Source:</span>
+          <a id="detailSourceLink" href="#" target="_blank" rel="noopener noreferrer"></a>
+        </div>
+
+        <div class="recipe-columns">
+          <!-- Ingredients Column -->
+          <div class="ingredients-column">
+            <div class="section-header">
+              <h2>Ingredients</h2>
+              <span id="ingredientCount" class="subtle-count"></span>
+            </div>
+            <p class="section-hint">Tap any ingredient to cross it off as you cook</p>
+            <ul id="detailIngredients" class="checklist"></ul>
+          </div>
+
+          <!-- Instructions Column -->
+          <div class="instructions-column">
+            <div class="section-header">
+              <h2>Instructions</h2>
+              <span id="instructionCount" class="subtle-count"></span>
+            </div>
+            <p class="section-hint">Tap a step to highlight where you are</p>
+            <ol id="detailInstructions" class="step-list"></ol>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- Modal: Add / Edit Recipe -->
+    <div id="recipeModal" class="modal-overlay hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3 id="modalTitle">Add New Recipe</h3>
+          <button id="closeModalBtn" class="btn-close">✕</button>
+        </div>
+        <form id="recipeForm" class="modal-body">
+          <div class="form-group">
+            <label for="formTitle">Recipe Title *</label>
+            <input type="text" id="formTitle" required placeholder="e.g. Lemon Garlic Salmon">
+          </div>
+
+          <div class="form-group">
+            <label for="formTags">Tags (comma-separated)</label>
+            <input type="text" id="formTags" placeholder="e.g. Seafood, Quick, Dinner, Healthy">
+            <small class="form-help">Tip: Tags become searchable filters in the app and folders in Drive</small>
+          </div>
+
+          <div class="form-group">
+            <label for="formUrl">Source URL (optional)</label>
+            <input type="url" id="formUrl" placeholder="https://...">
+          </div>
+
+          <div class="form-group">
+            <label for="formIngredients">Ingredients (one per line) *</label>
+            <textarea id="formIngredients" rows="6" required placeholder="2 salmon fillets&#10;2 tbsp olive oil&#10;2 cloves garlic, minced&#10;1 lemon, juiced&#10;Salt and black pepper to taste"></textarea>
+          </div>
+
+          <div class="form-group">
+            <label for="formInstructions">Instructions (one step per line) *</label>
+            <textarea id="formInstructions" rows="6" required placeholder="Preheat oven to 200C / 400F.&#10;Pat salmon dry and place on lined baking sheet.&#10;Mix olive oil, garlic, lemon juice, salt, and pepper. Spoon over salmon.&#10;Bake for 12-15 minutes until salmon flakes easily with a fork."></textarea>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" id="cancelModalBtn" class="btn btn-outline">Cancel</button>
+            <button type="submit" id="saveRecipeBtn" class="btn btn-primary">Save Recipe</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Google Drive Sync & Settings -->
+    <div id="settingsModal" class="modal-overlay hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3>Google Drive & Offline Settings</h3>
+          <button id="closeSettingsBtn" class="btn-close">✕</button>
+        </div>
+        <div class="modal-body settings-content">
+          <section class="settings-card">
+            <h4>☁️ Google Drive Sync</h4>
+            <p class="settings-desc">
+              Connect your Google Drive to sync your recipes directly from your Drive folder (e.g. <code>/Recipes/</code>).
+            </p>
+            
+            <div class="form-group">
+              <label for="gdriveClientId">Google OAuth Client ID</label>
+              <input type="text" id="gdriveClientId" placeholder="xxxxxxxxxxxx-xxxxxxxx.apps.googleusercontent.com">
+              <small class="form-help">Create a free Web Client ID in Google Cloud Console. Leave blank for offline/local mode.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="gdriveFolderName">Google Drive Folder Name</label>
+              <input type="text" id="gdriveFolderName" value="Recipes" placeholder="Recipes">
+            </div>
+
+            <div class="sync-actions">
+              <button id="connectDriveBtn" class="btn btn-primary">Sign in with Google</button>
+              <button id="forceSyncBtn" class="btn btn-outline" disabled>Sync Now</button>
+              <span id="syncStatus" class="sync-status">Not connected</span>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <h4>📁 Local / Offline Library</h4>
+            <p class="settings-desc">
+              Import `.txt` files directly from your computer, or download your entire recipe database as a single backup.
+            </p>
+            <div class="file-actions">
+              <label class="btn btn-outline file-input-label">
+                📂 Import Recipe Text Files
+                <input type="file" id="localFileInput" multiple accept=".txt,.md" style="display:none;">
+              </label>
+              <button id="exportAllBtn" class="btn btn-outline">💾 Export All Recipes (JSON)</button>
+              <button id="resetLibraryBtn" class="btn btn-danger-outline">🔄 Reload Built-in Recipes (233)</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Built-in recipe dataset for instant load -->
+  <script src="recipes_data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

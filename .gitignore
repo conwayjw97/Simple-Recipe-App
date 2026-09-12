@@ -1,0 +1,24 @@
+# Personal recipe files and databases (NEVER commit to GitHub)
+recipes_exported/
+recipes_database.json
+bookmarks.html
+*.txt
+app/recipes_data.js
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.env
+venv/
+env/
+
+# Logs & temp
+*.log
+Last_output.txt
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
