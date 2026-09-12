@@ -666,7 +666,7 @@ async function syncGoogleDrive() {
     // 2. Discover all subfolders (categories like Beef, Seafood, Italian)
     DOM.syncStatus.textContent = '⏳ Scanning category folders...';
     const subfolderQuery = `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const subfolderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subfolderQuery)}&fields=files(id, name)&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
+    const subfolderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subfolderQuery)}&fields=files(id, name)&supportsAllDrives=true&includeItemsFromAllDrives=true&pageSize=100`, {
       headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
     });
     const subfolderData = await subfolderRes.json();
@@ -679,44 +679,93 @@ async function syncGoogleDrive() {
       }
     }
 
-    // 3. Fetch .txt files from root folder and all subfolders
-    DOM.syncStatus.textContent = `⏳ Syncing files across ${folderMap.size} folder(s)...`;
-    let totalSynced = 0;
+    // 3. Scan all folders in parallel
+    DOM.syncStatus.textContent = `⏳ Scanning ${folderMap.size} folders in parallel...`;
+    const allFileEntries = [];
 
-    for (const [fId, fName] of folderMap.entries()) {
-      const fileQuery = `'${fId}' in parents and (mimeType = 'text/plain' or fileExtension = 'txt' or fileExtension = 'md') and trashed = false`;
-      const filesRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fileQuery)}&fields=files(id, name)&pageSize=1000`, {
-        headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
-      });
-      const filesData = await filesRes.json();
-
-      if (filesData.files && filesData.files.length > 0) {
-        for (const file of filesData.files) {
-          try {
-            const contentRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
-              headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
-            });
-            const text = await contentRes.text();
-            const parsed = parseRecipeText(text, file.name, fName);
-
-            // Update or insert into local storage
-            const existingIdx = STATE.recipes.findIndex(r => r.title.toLowerCase() === parsed.title.toLowerCase());
-            if (existingIdx !== -1) {
-              STATE.recipes[existingIdx] = { ...parsed, id: STATE.recipes[existingIdx].id };
-            } else {
-              STATE.recipes.push(parsed);
+    await Promise.all(Array.from(folderMap.entries()).map(async ([fId, fName]) => {
+      try {
+        const fileQuery = `'${fId}' in parents and (mimeType = 'text/plain' or fileExtension = 'txt' or fileExtension = 'md') and trashed = false`;
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fileQuery)}&fields=files(id, name)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
+          headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.files && data.files.length > 0) {
+            for (const file of data.files) {
+              allFileEntries.push({ file, folderName: fName });
             }
-            totalSynced++;
-          } catch (err) {
-            console.warn('Failed downloading file:', file.name, err);
+          }
+        }
+      } catch (err) {
+        console.warn('Folder scan error for', fName, err);
+      }
+    }));
+
+    if (allFileEntries.length === 0) {
+      DOM.syncStatus.textContent = '✅ Drive folder is empty (0 recipes found).';
+      return;
+    }
+
+    DOM.syncStatus.textContent = `⏳ Downloading ${allFileEntries.length} recipes...`;
+
+    // 4. Download files concurrently (12 parallel streams)
+    const CONCURRENCY = 12;
+    let completedCount = 0;
+    const downloadedRecipes = [];
+    let currentIndex = 0;
+
+    async function downloadWorker() {
+      while (currentIndex < allFileEntries.length) {
+        const idx = currentIndex++;
+        const { file, folderName } = allFileEntries[idx];
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout per file
+
+          const contentRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+            headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` },
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+
+          if (contentRes.ok) {
+            const text = await contentRes.text();
+            const parsed = parseRecipeText(text, file.name, folderName);
+            downloadedRecipes.push(parsed);
+          }
+        } catch (err) {
+          console.warn('Failed downloading file:', file.name, err);
+        } finally {
+          completedCount++;
+          if (completedCount % 5 === 0 || completedCount === allFileEntries.length) {
+            const pct = Math.round((completedCount / allFileEntries.length) * 100);
+            DOM.syncStatus.textContent = `⏳ Syncing ${completedCount}/${allFileEntries.length} recipes (${pct}%)...`;
           }
         }
       }
     }
 
+    const workers = [];
+    for (let i = 0; i < Math.min(CONCURRENCY, allFileEntries.length); i++) {
+      workers.push(downloadWorker());
+    }
+    await Promise.all(workers);
+
+    // Merge recipes into local storage
+    for (const r of downloadedRecipes) {
+      const existingIdx = STATE.recipes.findIndex(ex => ex.title.toLowerCase() === r.title.toLowerCase());
+      if (existingIdx !== -1) {
+        STATE.recipes[existingIdx] = { ...r, id: STATE.recipes[existingIdx].id };
+      } else {
+        STATE.recipes.push(r);
+      }
+    }
+
     saveRecipes();
     renderAll();
-    DOM.syncStatus.textContent = `✅ Successfully synced ${totalSynced} recipes from Google Drive!`;
+    DOM.syncStatus.textContent = `✅ Successfully synced ${downloadedRecipes.length} recipes!`;
   } catch (err) {
     console.error('Sync error:', err);
     DOM.syncStatus.textContent = `❌ Sync failed: ${err.message}`;
