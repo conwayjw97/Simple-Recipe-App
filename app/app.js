@@ -603,7 +603,7 @@ async function requestDriveSignIn() {
   }
 
   if (tokenClient) {
-    tokenClient.requestAccessToken({ prompt: 'consent' });
+    tokenClient.requestAccessToken({ prompt: 'select_account' });
   } else {
     alert('Google Identity Services script is loading or unavailable. Please check your internet connection.');
   }
@@ -618,39 +618,44 @@ async function syncGoogleDrive() {
   DOM.syncStatus.textContent = '⏳ Locating Google Drive folder...';
 
   try {
-    // 1. Locate root folder (e.g. "Recipes")
-    const folderName = STATE.gdrive.folderName || 'Recipes';
-    const folderQuery = `name = '${folderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const folderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(folderQuery)}&fields=files(id, name)`, {
-      headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
-    });
-    const folderData = await folderRes.json();
-
+    const folderInput = STATE.gdrive.folderName || 'Recipes';
     let rootFolderId = null;
-    if (folderData.files && folderData.files.length > 0) {
-      rootFolderId = folderData.files[0].id;
+
+    // Direct folder ID or search by name (supports both personal and shared folders)
+    if (/^[a-zA-Z0-9_-]{25,}$/.test(folderInput)) {
+      rootFolderId = folderInput;
     } else {
-      // Create Recipes folder
-      const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${STATE.gdrive.accessToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          name: folderName,
-          mimeType: 'application/vnd.google-apps.folder'
-        })
+      const folderQuery = `name = '${folderInput}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const folderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(folderQuery)}&fields=files(id, name)&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
+        headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
       });
-      const created = await createRes.json();
-      rootFolderId = created.id;
+      const folderData = await folderRes.json();
+
+      if (folderData.files && folderData.files.length > 0) {
+        rootFolderId = folderData.files[0].id;
+      } else {
+        // Create folder
+        const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${STATE.gdrive.accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: folderInput,
+            mimeType: 'application/vnd.google-apps.folder'
+          })
+        });
+        const created = await createRes.json();
+        rootFolderId = created.id;
+      }
     }
     STATE.gdrive.folderId = rootFolderId;
 
     // 2. Discover all subfolders (categories like Beef, Seafood, Italian)
     DOM.syncStatus.textContent = '⏳ Scanning category folders...';
     const subfolderQuery = `'${rootFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-    const subfolderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subfolderQuery)}&fields=files(id, name)`, {
+    const subfolderRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(subfolderQuery)}&fields=files(id, name)&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
       headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
     });
     const subfolderData = await subfolderRes.json();
@@ -753,6 +758,24 @@ async function uploadRecipeToDrive(recipe) {
 DOM.localFileInput.onchange = async (e) => {
   const files = e.target.files;
   if (!files || files.length === 0) return;
+
+  // If single JSON backup file
+  if (files.length === 1 && files[0].name.endsWith('.json')) {
+    try {
+      const text = await files[0].text();
+      const data = JSON.parse(text);
+      if (Array.isArray(data)) {
+        STATE.recipes = data;
+        saveRecipes();
+        renderAll();
+        alert(`Successfully imported ${data.length} recipes from backup!`);
+        return;
+      }
+    } catch (err) {
+      alert('Error parsing JSON backup file: ' + err.message);
+      return;
+    }
+  }
 
   let added = 0;
   for (const file of files) {
