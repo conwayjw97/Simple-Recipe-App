@@ -668,8 +668,8 @@ async function syncGoogleDrive() {
     let totalSynced = 0;
 
     for (const [fId, fName] of folderMap.entries()) {
-      const fileQuery = `'${fId}' in parents and (mimeType = 'text/plain' or name contains '.txt' or name contains '.md') and trashed = false`;
-      const filesRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fileQuery)}&fields=files(id, name)&pageSize=100`, {
+      const fileQuery = `'${fId}' in parents and (mimeType = 'text/plain' or fileExtension = 'txt' or fileExtension = 'md') and trashed = false`;
+      const filesRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fileQuery)}&fields=files(id, name)&pageSize=1000`, {
         headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
       });
       const filesData = await filesRes.json();
