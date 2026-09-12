@@ -21,6 +21,7 @@ const STATE = {
     isConnected: false
   }
 };
+window.STATE = STATE;
 
 const STORAGE_KEY = 'recipebox_library_v1';
 
@@ -136,9 +137,9 @@ function parseRecipeText(text, filename = '', folderName = '') {
       }
       continue;
     }
-    if (lower.startsWith('servings:') || lower.startsWith('serves:') || lower.startsWith('yield:')) {
-      const m = trimmed.match(/\d+/);
-      if (m) servings = parseInt(m[0], 10);
+    const servHeaderMatch = trimmed.match(/^(?:servings?|serves?|yield)\s*[:=-]?\s*(\d+)/i);
+    if (servHeaderMatch) {
+      servings = parseInt(servHeaderMatch[1], 10);
       continue;
     }
     if (lower.startsWith('source:') || lower.startsWith('url:')) {
@@ -156,12 +157,13 @@ function parseRecipeText(text, filename = '', folderName = '') {
       continue;
     }
 
-    // Step detection: starting with bullet, dash, or number
-    if (/^[-*•]\s+/.test(trimmed) || /^\d+[\.\)]\s+/.test(trimmed)) {
-      inInstructions = true;
-      inIngredients = false;
-      instructions.push(trimmed.replace(/^[-*•\d\.\)]+\s*/, ''));
+    if (inIngredients) {
+      ingredients.push(trimmed.replace(/^[-*•✓✔]\s*/, ''));
     } else if (inInstructions) {
+      instructions.push(trimmed.replace(/^[-*•\d\.\)]+\s*/, ''));
+    } else if (/^[-*•]\s+/.test(trimmed) || /^\d+[\.\)]\s+/.test(trimmed)) {
+      // Legacy format with no explicit [Ingredients] header: first bullet indicates instructions
+      inInstructions = true;
       instructions.push(trimmed.replace(/^[-*•\d\.\)]+\s*/, ''));
     } else {
       ingredients.push(trimmed);
@@ -174,7 +176,7 @@ function parseRecipeText(text, filename = '', folderName = '') {
     servings = titleMatch ? parseInt(titleMatch[1], 10) : (textMatch ? parseInt(textMatch[1], 10) : 4);
   }
 
-  return {
+  const recipe = {
     id: 'rec_' + Math.random().toString(36).substr(2, 9),
     title: title || 'Untitled Recipe',
     tags: Array.from(tags).sort(),
@@ -183,6 +185,49 @@ function parseRecipeText(text, filename = '', folderName = '') {
     ingredients,
     instructions
   };
+
+  cleanRecipeIngredients(recipe);
+  return recipe;
+}
+
+/**
+ * Sanitizes recipe ingredients: strips stray section headers, bullets,
+ * and rogue "Servings: X" lines, while setting recipe.servings.
+ */
+function cleanRecipeIngredients(recipe) {
+  if (!recipe) return;
+  if (!recipe.ingredients || !Array.isArray(recipe.ingredients)) {
+    recipe.ingredients = [];
+  }
+
+  const cleaned = [];
+  for (const item of recipe.ingredients) {
+    if (typeof item !== 'string') continue;
+    let line = item.trim();
+    if (!line) continue;
+
+    // Strip leading dashes, bullets, or checkmarks
+    line = line.replace(/^[-*•✓✔]\s*/, '').trim();
+
+    // Check if this line is actually a Servings/Yield/Serves header
+    const servMatch = line.match(/^(?:servings?|serves?|yield)\s*[:=-]?\s*(\d+)/i);
+    if (servMatch) {
+      const foundServings = parseInt(servMatch[1], 10);
+      if (foundServings > 0 && (!recipe.servings || recipe.servings === 4)) {
+        recipe.servings = foundServings;
+      }
+      continue; // Strip from ingredients!
+    }
+
+    // Skip stray section headers
+    if (/^\[?(?:ingredients|instructions|tags|title|source|url)\]?:?$/i.test(line)) {
+      continue;
+    }
+
+    cleaned.push(line);
+  }
+  recipe.ingredients = cleaned;
+  recipe.servings = parseInt(recipe.servings, 10) || 4;
 }
 
 /**
@@ -350,21 +395,48 @@ function loadRecipes() {
     if (raw) {
       STATE.recipes = JSON.parse(raw);
     } else if (window.INITIAL_RECIPES && Array.from(window.INITIAL_RECIPES).length > 0) {
-      STATE.recipes = window.INITIAL_RECIPES;
+      STATE.recipes = JSON.parse(JSON.stringify(window.INITIAL_RECIPES));
       saveRecipes();
     }
 
-    // Ensure all loaded recipes have a valid servings count
+    // Ensure any newly added built-in recipes are merged in
     let needsSave = false;
+    if (window.INITIAL_RECIPES && Array.isArray(window.INITIAL_RECIPES)) {
+      for (const ir of window.INITIAL_RECIPES) {
+        if (!STATE.recipes.some(r => r.title.toLowerCase() === ir.title.toLowerCase())) {
+          STATE.recipes.push(JSON.parse(JSON.stringify(ir)));
+          needsSave = true;
+        }
+      }
+    }
+
+    // Ensure all loaded recipes have valid servings, clean ingredients, and heal misparsed recipes
     for (const r of STATE.recipes) {
+      const oldLen = (r.ingredients || []).length;
+      const oldServ = r.servings;
+      cleanRecipeIngredients(r);
+
+      const match = (window.INITIAL_RECIPES || []).find(ir => ir.title.toLowerCase() === r.title.toLowerCase());
+      if (match) {
+        // Auto-heal recipes that were previously misparsed (e.g. Pasta e Tonno had 1 ingredient instead of 10)
+        if (match.ingredients && match.ingredients.length > (r.ingredients || []).length) {
+          r.ingredients = JSON.parse(JSON.stringify(match.ingredients));
+          r.instructions = JSON.parse(JSON.stringify(match.instructions));
+          r.servings = match.servings;
+        }
+      }
+
       if (!r.servings) {
-        const match = (window.INITIAL_RECIPES || []).find(ir => ir.title.toLowerCase() === r.title.toLowerCase());
         if (match && match.servings) {
           r.servings = match.servings;
         } else {
           const m = (r.title || '').match(/\bfor\s+(\d+)\b/i);
           r.servings = m ? parseInt(m[1], 10) : 4;
         }
+      }
+      r.servings = parseInt(r.servings, 10) || 4;
+
+      if ((r.ingredients || []).length !== oldLen || r.servings !== oldServ) {
         needsSave = true;
       }
     }
@@ -496,14 +568,20 @@ function getFilteredRecipes() {
       const tagQuery = q.slice(1);
       list = list.filter(r => r.tags && r.tags.some(t => t.toLowerCase().includes(tagQuery)));
     } else {
+      // Split by comma if user separated ingredients with commas (e.g. "chicken, garlic"),
+      // otherwise split by whitespace (e.g. "chicken garlic")
+      const terms = q.includes(',')
+        ? q.split(',').map(t => t.trim()).filter(t => t.length > 0)
+        : q.split(/\s+/).filter(t => t.length > 0);
+
       list = list.filter(r => {
-        // Title match
-        if (r.title && r.title.toLowerCase().includes(q)) return true;
-        // Tag match
-        if (r.tags && r.tags.some(t => t.toLowerCase().includes(q))) return true;
-        // Ingredients match
-        if (r.ingredients && r.ingredients.some(i => i.toLowerCase().includes(q))) return true;
-        return false;
+        // Every search term must match in title, tags, or anywhere in ingredients
+        return terms.every(term => {
+          if (r.title && r.title.toLowerCase().includes(term)) return true;
+          if (r.tags && r.tags.some(t => t.toLowerCase().includes(term))) return true;
+          if (r.ingredients && r.ingredients.some(i => i.toLowerCase().includes(term))) return true;
+          return false;
+        });
       });
     }
   }
@@ -549,7 +627,7 @@ function renderRecipeList() {
         <div class="recipe-card-tags">${tagsHtml}</div>
       </div>
       <div class="recipe-card-meta">
-        <span>👥 ${recipe.servings || 4} servings</span>
+        <span>👥 ${recipe.servings || 4} ${(recipe.servings || 4) === 1 ? 'serving' : 'servings'}</span>
         <span>🥕 ${recipe.ingredients ? recipe.ingredients.length : 0} items</span>
         <span>📝 ${recipe.instructions ? recipe.instructions.length : 0} steps</span>
       </div>
@@ -572,13 +650,18 @@ function renderAll() {
 
 function renderDetailIngredients(preserveChecked = false) {
   if (!STATE.currentRecipe) return;
+  cleanRecipeIngredients(STATE.currentRecipe);
   const recipe = STATE.currentRecipe;
-  const baseServings = recipe.servings || 4;
-  const factor = STATE.currentServings / baseServings;
+  const baseServings = parseInt(recipe.servings, 10) || 4;
+  if (!STATE.currentServings) {
+    STATE.currentServings = baseServings;
+  }
+  const currentServings = parseInt(STATE.currentServings, 10) || baseServings;
+  const factor = currentServings / baseServings;
 
   // Preserve checked state
   const checkedIndices = new Set();
-  if (preserveChecked) {
+  if (preserveChecked && DOM.detailIngredients && typeof DOM.detailIngredients.querySelectorAll === 'function') {
     const existingItems = DOM.detailIngredients.querySelectorAll('.checklist-item');
     existingItems.forEach((el, idx) => {
       if (el.classList.contains('checked')) {
@@ -589,13 +672,13 @@ function renderDetailIngredients(preserveChecked = false) {
 
   // Update Servings Bar UI
   if (DOM.detailServingsCount) {
-    DOM.detailServingsCount.textContent = `${baseServings} servings`;
+    DOM.detailServingsCount.textContent = `${baseServings} ${baseServings === 1 ? 'serving' : 'servings'}`;
   }
   if (DOM.servingsCurrentVal) {
-    DOM.servingsCurrentVal.textContent = STATE.currentServings;
+    DOM.servingsCurrentVal.textContent = currentServings;
   }
 
-  const isScaled = STATE.currentServings !== baseServings;
+  const isScaled = currentServings !== baseServings;
   if (DOM.servingsScaledNotice) {
     if (isScaled) {
       const mult = factor % 1 === 0 ? factor.toString() : factor.toFixed(2);
@@ -611,20 +694,23 @@ function renderDetailIngredients(preserveChecked = false) {
   }
 
   // Update active state on preset chips
-  if (DOM.servingsPresets) {
+  if (DOM.servingsPresets && typeof DOM.servingsPresets.querySelectorAll === 'function') {
     const chips = DOM.servingsPresets.querySelectorAll('.preset-chip');
     chips.forEach(chip => {
       const scale = parseFloat(chip.dataset.scale);
       const expected = Math.max(1, Math.round(baseServings * scale));
-      chip.classList.toggle('active', STATE.currentServings === expected);
+      chip.classList.toggle('active', currentServings === expected);
     });
   }
 
   // Render scaled ingredients
-  DOM.detailIngredients.innerHTML = '';
-  DOM.ingredientCount.textContent = `(${recipe.ingredients ? recipe.ingredients.length : 0})`;
-  if (recipe.ingredients) {
-    recipe.ingredients.forEach((ing, idx) => {
+  if (DOM.detailIngredients) {
+    DOM.detailIngredients.innerHTML = '';
+    const ingredients = recipe.ingredients || [];
+    if (DOM.ingredientCount) {
+      DOM.ingredientCount.textContent = `(${ingredients.length})`;
+    }
+    ingredients.forEach((ing, idx) => {
       const scaledText = scaleIngredient(ing, factor);
       const li = document.createElement('li');
       li.className = 'checklist-item' + (checkedIndices.has(idx) ? ' checked' : '');
@@ -639,15 +725,37 @@ function renderDetailIngredients(preserveChecked = false) {
 }
 
 function setDetailServings(newServings) {
-  newServings = Math.max(1, Math.min(100, Math.round(newServings)));
+  newServings = Math.max(1, Math.min(100, Math.round(Number(newServings) || 4)));
   if (newServings === STATE.currentServings) return;
   STATE.currentServings = newServings;
   renderDetailIngredients(true);
 }
 
+// Global window helpers for direct button actions
+window.changeServings = function(delta) {
+  if (!STATE.currentRecipe) return;
+  const base = parseInt(STATE.currentRecipe.servings, 10) || 4;
+  const cur = parseInt(STATE.currentServings, 10) || base;
+  setDetailServings(cur + delta);
+};
+
+window.setServingsPreset = function(scale) {
+  if (!STATE.currentRecipe) return;
+  const base = parseInt(STATE.currentRecipe.servings, 10) || 4;
+  const target = Math.max(1, Math.round(base * parseFloat(scale)));
+  setDetailServings(target);
+};
+
+window.resetServings = function() {
+  if (!STATE.currentRecipe) return;
+  const base = parseInt(STATE.currentRecipe.servings, 10) || 4;
+  setDetailServings(base);
+};
+
 async function openRecipe(recipe) {
+  cleanRecipeIngredients(recipe);
   STATE.currentRecipe = recipe;
-  STATE.currentServings = recipe.servings || 4;
+  STATE.currentServings = parseInt(recipe.servings, 10) || 4;
 
   DOM.detailTitle.textContent = recipe.title;
 
@@ -670,19 +778,18 @@ async function openRecipe(recipe) {
 
   // Instructions step cards
   DOM.detailInstructions.innerHTML = '';
-  DOM.instructionCount.textContent = `(${recipe.instructions ? recipe.instructions.length : 0})`;
-  if (recipe.instructions) {
-    recipe.instructions.forEach((step, idx) => {
-      const li = document.createElement('li');
-      li.className = 'step-item';
-      li.innerHTML = `
-        <span class="step-number">${idx + 1}</span>
-        <span class="step-text">${escapeHtml(step)}</span>
-      `;
-      li.onclick = () => li.classList.toggle('active');
-      DOM.detailInstructions.appendChild(li);
-    });
-  }
+  const instructions = recipe.instructions || [];
+  DOM.instructionCount.textContent = `(${instructions.length})`;
+  instructions.forEach((step, idx) => {
+    const li = document.createElement('li');
+    li.className = 'step-item';
+    li.innerHTML = `
+      <span class="step-number">${idx + 1}</span>
+      <span class="step-text">${escapeHtml(step)}</span>
+    `;
+    li.onclick = () => li.classList.toggle('active');
+    DOM.detailInstructions.appendChild(li);
+  });
 
   // Switch views
   DOM.listView.classList.add('hidden');
@@ -784,6 +891,7 @@ DOM.recipeForm.onsubmit = async (e) => {
     updatedRecipe = newRecipe;
   }
 
+  cleanRecipeIngredients(updatedRecipe);
   saveRecipes();
   closeRecipeModal();
   renderAll();
@@ -1111,9 +1219,14 @@ DOM.exportAllBtn.onclick = () => {
 
 DOM.resetLibraryBtn.onclick = () => {
   if (confirm('Reset to the initial 246 recipes library? Any local edits will be refreshed.')) {
-    STATE.recipes = window.INITIAL_RECIPES || [];
+    STATE.recipes = JSON.parse(JSON.stringify(window.INITIAL_RECIPES || []));
+    for (const r of STATE.recipes) {
+      cleanRecipeIngredients(r);
+    }
     saveRecipes();
     renderAll();
+    if (DOM.settingsModal) DOM.settingsModal.classList.add('hidden');
+    alert(`Library successfully reset to ${STATE.recipes.length} recipes!`);
   }
 };
 
@@ -1142,31 +1255,33 @@ DOM.fontUpBtn.onclick = () => adjustFontSize(+0.1);
 
 // Servings controls in Detail View
 if (DOM.servingsDownBtn) {
-  DOM.servingsDownBtn.onclick = () => {
-    if (STATE.currentServings) setDetailServings(STATE.currentServings - 1);
+  DOM.servingsDownBtn.onclick = (e) => {
+    e.preventDefault();
+    window.changeServings(-1);
   };
 }
 
 if (DOM.servingsUpBtn) {
-  DOM.servingsUpBtn.onclick = () => {
-    if (STATE.currentServings) setDetailServings(STATE.currentServings + 1);
+  DOM.servingsUpBtn.onclick = (e) => {
+    e.preventDefault();
+    window.changeServings(1);
   };
 }
 
 if (DOM.servingsResetBtn) {
-  DOM.servingsResetBtn.onclick = () => {
-    if (STATE.currentRecipe) setDetailServings(STATE.currentRecipe.servings || 4);
+  DOM.servingsResetBtn.onclick = (e) => {
+    e.preventDefault();
+    window.resetServings();
   };
 }
 
 if (DOM.servingsPresets) {
   DOM.servingsPresets.onclick = (e) => {
     const chip = e.target.closest('.preset-chip');
-    if (!chip || !STATE.currentRecipe) return;
+    if (!chip) return;
+    e.preventDefault();
     const scale = parseFloat(chip.dataset.scale);
-    const base = STATE.currentRecipe.servings || 4;
-    const target = Math.max(1, Math.round(base * scale));
-    setDetailServings(target);
+    window.setServingsPreset(scale);
   };
 }
 

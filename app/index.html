@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="description" content="Super-lightweight offline recipe viewer and manager synced with Google Drive.">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=7">
   <!-- Google Identity Services for Drive Sync -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
@@ -94,6 +94,32 @@
         
         <div id="detailTags" class="detail-tags"></div>
 
+        <!-- Servings & Scaling Bar (Prominent recipe-level control) -->
+        <div class="servings-bar" id="servingsBar">
+          <div class="servings-header-row">
+            <div class="servings-badge-wrapper">
+              <span class="servings-icon">👥</span>
+              <span class="servings-title">Servings:</span>
+              <span id="detailServingsCount" class="servings-badge">4</span>
+            </div>
+            <span id="servingsScaledNotice" class="servings-scaled-notice hidden"></span>
+          </div>
+          <div class="servings-controls-row">
+            <div class="servings-stepper" title="Adjust servings up or down">
+              <button type="button" id="servingsDownBtn" class="btn btn-sm btn-stepper" aria-label="Decrease servings" onclick="window.changeServings(-1)">−</button>
+              <span id="servingsCurrentVal" class="servings-current-val">4</span>
+              <button type="button" id="servingsUpBtn" class="btn btn-sm btn-stepper" aria-label="Increase servings" onclick="window.changeServings(1)">+</button>
+            </div>
+            <div class="servings-presets" id="servingsPresets">
+              <button type="button" class="preset-chip" data-scale="0.5" onclick="window.setServingsPreset(0.5)" title="Scale to 50%">½x</button>
+              <button type="button" class="preset-chip active" data-scale="1" onclick="window.setServingsPreset(1)" title="Original size">1x</button>
+              <button type="button" class="preset-chip" data-scale="2" onclick="window.setServingsPreset(2)" title="Double ingredients">2x</button>
+              <button type="button" class="preset-chip" data-scale="3" onclick="window.setServingsPreset(3)" title="Triple ingredients">3x</button>
+            </div>
+            <button type="button" id="servingsResetBtn" class="btn btn-sm servings-reset-btn hidden" onclick="window.resetServings()" title="Reset to original servings">↺ Reset</button>
+          </div>
+        </div>
+
         <div id="detailSourceWrapper" class="source-wrapper hidden">
           <span class="source-label">Source:</span>
           <a id="detailSourceLink" href="#" target="_blank" rel="noopener noreferrer"></a>
@@ -106,33 +132,6 @@
               <h2>Ingredients</h2>
               <span id="ingredientCount" class="subtle-count"></span>
             </div>
-
-            <!-- Servings & Scaling Bar -->
-            <div class="servings-bar" id="servingsBar">
-              <div class="servings-header-row">
-                <div class="servings-badge-wrapper">
-                  <span class="servings-icon">👥</span>
-                  <span class="servings-title">Servings:</span>
-                  <span id="detailServingsCount" class="servings-badge">4</span>
-                </div>
-                <span id="servingsScaledNotice" class="servings-scaled-notice hidden"></span>
-              </div>
-              <div class="servings-controls-row">
-                <div class="servings-stepper" title="Adjust servings up or down">
-                  <button type="button" id="servingsDownBtn" class="btn btn-sm btn-stepper" aria-label="Decrease servings">−</button>
-                  <span id="servingsCurrentVal" class="servings-current-val">4</span>
-                  <button type="button" id="servingsUpBtn" class="btn btn-sm btn-stepper" aria-label="Increase servings">+</button>
-                </div>
-                <div class="servings-presets" id="servingsPresets">
-                  <button type="button" class="preset-chip" data-scale="0.5" title="Scale to 50%">½x</button>
-                  <button type="button" class="preset-chip active" data-scale="1" title="Original size">1x</button>
-                  <button type="button" class="preset-chip" data-scale="2" title="Double ingredients">2x</button>
-                  <button type="button" class="preset-chip" data-scale="3" title="Triple ingredients">3x</button>
-                </div>
-                <button type="button" id="servingsResetBtn" class="btn btn-sm servings-reset-btn hidden" title="Reset to original servings">↺ Reset</button>
-              </div>
-            </div>
-
             <p class="section-hint">Tap any ingredient to cross it off as you cook</p>
             <ul id="detailIngredients" class="checklist"></ul>
           </div>
@@ -247,7 +246,7 @@
                 <input type="file" id="localFileInput" multiple accept=".txt,.md,.json" style="display:none;">
               </label>
               <button id="exportAllBtn" class="btn btn-outline">💾 Export All Recipes (JSON)</button>
-              <button id="resetLibraryBtn" class="btn btn-danger-outline">🔄 Reload Built-in Recipes (246)</button>
+              <button id="resetLibraryBtn" class="btn btn-danger-outline">🔄 Reload Built-in Recipes (276)</button>
             </div>
           </section>
         </div>
@@ -256,7 +255,7 @@
   </div>
 
   <!-- Built-in recipe dataset for instant load -->
-  <script src="recipes_data.js"></script>
-  <script src="app.js"></script>
+  <script src="recipes_data.js?v=8"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
