@@ -13,6 +13,7 @@ const STATE = {
   wakeLock: null,
   gdrive: {
     clientId: localStorage.getItem('rb_gdrive_client_id') || '',
+    userEmail: localStorage.getItem('rb_gdrive_email') || 'conwayjw97@gmail.com',
     folderName: localStorage.getItem('rb_gdrive_folder') || 'Recipes',
     accessToken: null,
     folderId: null,
@@ -72,6 +73,7 @@ const DOM = {
   settingsModal: document.getElementById('settingsModal'),
   closeSettingsBtn: document.getElementById('closeSettingsBtn'),
   gdriveClientId: document.getElementById('gdriveClientId'),
+  gdriveUserEmail: document.getElementById('gdriveUserEmail'),
   gdriveFolderName: document.getElementById('gdriveFolderName'),
   connectDriveBtn: document.getElementById('connectDriveBtn'),
   forceSyncBtn: document.getElementById('forceSyncBtn'),
@@ -564,6 +566,7 @@ let tokenClient = null;
 
 function initGoogleDriveAuth() {
   DOM.gdriveClientId.value = STATE.gdrive.clientId;
+  if (DOM.gdriveUserEmail) DOM.gdriveUserEmail.value = STATE.gdrive.userEmail;
   DOM.gdriveFolderName.value = STATE.gdrive.folderName;
 
   if (window.google && window.google.accounts && STATE.gdrive.clientId) {
@@ -571,6 +574,7 @@ function initGoogleDriveAuth() {
       tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: STATE.gdrive.clientId,
         scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly',
+        prompt: 'select_account',
         callback: async (tokenResponse) => {
           if (tokenResponse && tokenResponse.access_token) {
             STATE.gdrive.accessToken = tokenResponse.access_token;
@@ -593,9 +597,12 @@ async function requestDriveSignIn() {
     alert('Please enter your Google OAuth Client ID first.\n(See settings note for how to get a free Web Client ID).');
     return;
   }
+  const email = DOM.gdriveUserEmail ? DOM.gdriveUserEmail.value.trim() : '';
   STATE.gdrive.clientId = clientId;
+  STATE.gdrive.userEmail = email;
   STATE.gdrive.folderName = DOM.gdriveFolderName.value.trim() || 'Recipes';
   localStorage.setItem('rb_gdrive_client_id', clientId);
+  localStorage.setItem('rb_gdrive_email', email);
   localStorage.setItem('rb_gdrive_folder', STATE.gdrive.folderName);
 
   if (!tokenClient) {
@@ -603,7 +610,11 @@ async function requestDriveSignIn() {
   }
 
   if (tokenClient) {
-    tokenClient.requestAccessToken({ prompt: 'select_account' });
+    const opts = { prompt: 'select_account' };
+    if (email) {
+      opts.hint = email;
+    }
+    tokenClient.requestAccessToken(opts);
   } else {
     alert('Google Identity Services script is loading or unavailable. Please check your internet connection.');
   }
@@ -865,9 +876,13 @@ DOM.forceSyncBtn.onclick = syncGoogleDrive;
 // PWA Service Worker Registration
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(err => {
-      console.log('Service Worker registration skipped:', err);
-    });
+    navigator.serviceWorker.register('sw.js')
+      .then(reg => {
+        reg.update();
+      })
+      .catch(err => {
+        console.log('Service Worker registration skipped:', err);
+      });
   });
 }
 

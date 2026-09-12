@@ -1,4 +1,4 @@
-const CACHE_NAME = 'recipebox-cache-v1';
+const CACHE_NAME = 'recipebox-cache-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -40,14 +40,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Network-First: Always fetch latest updates when online, fallback to cache when offline
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      return (
-        cachedResponse ||
-        fetch(event.request).catch(() => {
-          return caches.match('./index.html');
-        })
-      );
-    })
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200 && event.request.method === 'GET') {
+          const resClone = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cached) => cached || caches.match('./index.html'));
+      })
   );
 });
