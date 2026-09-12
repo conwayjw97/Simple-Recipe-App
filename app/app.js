@@ -685,20 +685,26 @@ async function syncGoogleDrive() {
 
     await Promise.all(Array.from(folderMap.entries()).map(async ([fId, fName]) => {
       try {
-        const fileQuery = `'${fId}' in parents and (mimeType = 'text/plain' or fileExtension = 'txt' or fileExtension = 'md') and trashed = false`;
-        const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fileQuery)}&fields=files(id, name)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
+        const fileQuery = `'${fId}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'`;
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fileQuery)}&fields=files(id, name, mimeType)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
           headers: { Authorization: `Bearer ${STATE.gdrive.accessToken}` }
         });
         if (res.ok) {
           const data = await res.json();
           if (data.files && data.files.length > 0) {
             for (const file of data.files) {
-              allFileEntries.push({ file, folderName: fName });
+              const lower = (file.name || '').toLowerCase();
+              if (lower.endsWith('.txt') || lower.endsWith('.md') || file.mimeType === 'text/plain') {
+                allFileEntries.push({ file, folderName: fName });
+              }
             }
           }
+        } else {
+          const errBody = await res.text();
+          console.warn('Folder scan error for', fName, errBody);
         }
       } catch (err) {
-        console.warn('Folder scan error for', fName, err);
+        console.warn('Folder scan network error for', fName, err);
       }
     }));
 
