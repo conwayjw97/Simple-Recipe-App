@@ -130,15 +130,15 @@ def main():
     if not token:
         password = args.password
         if not password:
-            print(f"\nTo connect to Google Keep for {args.email}, enter your Google App Password.")
-            print("(Generate one at: https://myaccount.google.com/apppasswords)")
-            password = getpass.getpass("Enter 16-character App Password: ")
+            password = input("Enter or paste 16-character App Password: ")
             if not password:
                 print("No password provided. Exiting.")
                 return
 
         # Strip all spaces and newlines (Google displays them in blocks of 4: 'xxxx xxxx xxxx xxxx')
-        password = re.sub(r'\s+', '', password).strip()
+        cleaned_password = re.sub(r'\s+', '', password).strip()
+        print(f"Cleaned password to use: {cleaned_password} ({len(cleaned_password)} characters)")
+        password = cleaned_password
 
         print(f"Logging in to Google Keep as {args.email}...")
         try:
